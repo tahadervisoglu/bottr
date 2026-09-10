@@ -113,7 +113,8 @@ PAGES = {
     "Grafik": "Mum grafigi uzerinde botun aldigi ve sattigi noktalar",
     "Islem gecmisi": "Tamamlanmis islemler ve neden kapandiklari",
     "Sinyal logu": "Gordugu her formasyon, islem acti mi acmadi mi",
-    "Backtest (gecmis test)": "Ayni kurallarin son 30 gundeki sonucu",
+    "Backtest (kisa test)": "Ayni kurallarin son 30 gundeki sonucu",
+    "Backtest (uzun test)": "Ayni kurallarin son 180 gundeki sonucu",
 }
 
 with st.sidebar:
@@ -272,6 +273,8 @@ def body():
                     "Hedefe kalan %": round(mesafe_tp, 2),
                     "Stopa kalan %": round(mesafe_sl, 2),
                     "Riske attigi $": round((r["entry_price"] - r["sl"]) * r["qty"], 2),
+                    "Risk %": round(r["risk_pct_real"], 2)
+                              if pd.notna(r.get("risk_pct_real")) else None,
                     "Neden aldi": r["reason_entry"],
                 })
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
@@ -310,6 +313,11 @@ def body():
         df = store.query("SELECT * FROM equity WHERE mode=? ORDER BY ts", (mode,))
         if df.empty:
             st.info("Henuz kayit yok.")
+            return
+        if df["ts"].nunique() < 3:
+            # A backtest writes one snapshot at the end, so there is no curve.
+            st.caption("Gecmis test tek bir kapanis degeri yazar, egri olusmaz. "
+                       "Zaman icindeki degisimi canli simulasyonda gorursun.")
             return
         df["zaman"] = pd.to_datetime(df["ts"], unit="ms")
         fig = go.Figure()
@@ -569,31 +577,89 @@ def body():
 
     # ----------------------------------------------------------- tab: backtest ---
 
-    if page == "Backtest (gecmis test)":
-        st.write(
-            "Gecmis test, ayni kurallari son 30 gunun verisi uzerinde bastan sona "
-            "calistirir. Canli simulasyondan bagimsizdir ve cok daha fazla islem "
-            "urettigi icin daha guvenilir bir fikir verir.")
-        bt = summary_frame("backtest")
-        if bt["Islem"].sum() == 0:
-            st.info("Sonuc yok. Terminalde calistir:  python backtest.py --days 30")
+    if page.startswith("Backtest"):
+        mode = "backtest_long" if "uzun" in page else "backtest"
+        cmd = ("python backtest.py --long" if mode == "backtest_long"
+               else "python backtest.py --days 30")
+        days = store.get_state(f"{mode}:days")
+        ran = store.get_state(f"{mode}:ran_at")
+
+        if mode == "backtest_long":
+            st.write(
+                f"Uzun test, ayni kurallari {days or config.LONG_TEST_DAYS} gunluk "
+                "veri uzerinde calistirir. Kisa test tek bir piyasa donemini olcer "
+                "ve o donem yukselisse sonuc yaniltici cikar. Uzun test hem yukselis "
+                "hem dusus icerdigi icin kuralin gercekten calisip calismadigini "
+                "gosterir. Sadece XRP'de tam gecmis var; DEBIT ve ROBIN yeni "
+                "listelendigi icin kendi yaslari kadar veri katiyor.")
         else:
-            show = bt.drop(columns=["_sid", "Pozisyon"])
+            st.write(
+                f"Kisa test, ayni kurallari son {days or config.BACKFILL_DAYS} gunun "
+                "verisi uzerinde calistirir. Canli simulasyondan bagimsizdir. Tek "
+                "donemi olctugu icin uzun testle birlikte okunmalidir.")
+
+        if ran:
+            st.caption(f"Son calistirma: {ago(ran)}")
+
+        bt = summary_frame(mode)
+        if bt["Islem"].sum() == 0:
+            st.info(f"Sonuc yok. Terminalde calistir:  {cmd}")
+        else:
+            bh = {}
+            for asset, tf, sid in config.all_strategies():
+                d = store.load_candles(asset["symbol"], tf)
+                cut = store.now_ms() - int(days or config.BACKFILL_DAYS) * 86_400_000
+                d = d[d["ts"] >= cut]
+                bh[sid] = ((d["close"].iloc[-1] / d["close"].iloc[0] - 1) * 100
+                           if len(d) > 1 else 0.0)
+                bh[sid + "_gun"] = ((d["ts"].iloc[-1] - d["ts"].iloc[0]) / 86_400_000
+                                    if len(d) > 1 else 0.0)
+
+            show = bt.drop(columns=["Pozisyon"]).copy()
+            show["Al-tut %"] = show["_sid"].map(bh).round(2)
+            show["Fark"] = (show["Getiri %"] - show["Al-tut %"]).round(2)
+            show["Veri gun"] = show["_sid"].map(
+                {k[:-4]: v for k, v in bh.items() if k.endswith("_gun")}).round(1)
+            show = show.drop(columns=["_sid"])
             st.dataframe(
                 show.style.format({
                     "Baslangic": "{:,.2f}", "Su anki deger": "{:,.2f}",
                     "Kar/Zarar": "{:+,.2f}", "Getiri %": "{:+.2f}",
+                    "Al-tut %": "{:+.2f}", "Fark": "{:+.2f}",
                 }).map(lambda v: f"color:{GREEN if v > 0 else RED if v < 0 else GREY}",
-                       subset=["Kar/Zarar", "Getiri %"]),
+                       subset=["Kar/Zarar", "Getiri %", "Fark"]),
                 hide_index=True, use_container_width=True)
-            a, b = st.columns(2)
-            g5 = bt[bt["Zaman"] == "5m"]
-            g15 = bt[bt["Zaman"] == "15m"]
-            a.metric("5 dakikalik toplam", money(g5["Su anki deger"].sum()),
+            st.caption(
+                "Al-tut: ayni parayi o coine yatirip hic dokunmasaydin ne olurdu. "
+                "Fark: botun bu referansa gore ne kadar iyi ya da kotu oldugu. "
+                "Fark eksiyse bot, hicbir sey yapmamaktan daha kotu calismis.")
+
+            total_start = bt["Baslangic"].sum()
+            total_end = bt["Su anki deger"].sum()
+            a, b, c = st.columns(3)
+            a.metric("Toplam sonuc", money(total_end),
+                     f"{(total_end - total_start) / total_start * 100:+.2f}%")
+            g5, g15 = bt[bt["Zaman"] == "5m"], bt[bt["Zaman"] == "15m"]
+            b.metric("5 dakikalik toplam", money(g5["Su anki deger"].sum()),
                      f"{g5['Kar/Zarar'].sum():+,.2f} $")
-            b.metric("15 dakikalik toplam", money(g15["Su anki deger"].sum()),
+            c.metric("15 dakikalik toplam", money(g15["Su anki deger"].sum()),
                      f"{g15['Kar/Zarar'].sum():+,.2f} $")
-            equity_chart("backtest")
+
+            t = store.query(
+                "SELECT * FROM trades WHERE mode=? AND status='closed'", (mode,))
+            if not t.empty:
+                gross = (t["pnl"] + t["fee"]).sum()
+                risk = t["risk_pct_real"].dropna()
+                d1, d2, d3 = st.columns(3)
+                d1.metric("Komisyon oncesi brut", money(gross))
+                d1.caption("Sinyalin ham sonucu, maliyet dusulmeden")
+                d2.metric("Odenen komisyon", money(t["fee"].sum() * 2))
+                d2.caption("Brut sonuctan buyukse maliyet kenari yiyor demektir")
+                d3.metric("Islem basina gercek risk",
+                          f"%{risk.mean():.2f}" if len(risk) else "-")
+                d3.caption("Config'de hedeflenen ile karsilastir")
+
+            equity_chart(mode)
 
 
 

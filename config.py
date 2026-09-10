@@ -21,6 +21,11 @@ MAX_HOLD_BARS = {"5m": 48, "15m": 32}
 # Assets. `alloc` is the fraction of TOTAL_CAPITAL, `risk_pct` is the fraction
 # of that asset's own balance risked on a single trade, `slippage` is the
 # adverse price move applied on both entry and exit.
+#
+# Trabzonspor Fan Token was removed. Its venues turn over roughly 15,000 USD a
+# day, so even a 250 USD position is about 1.7% of daily volume. A simulation
+# there measures nothing that would survive real execution. Its allocation went
+# to the two names that can absorb the size.
 ASSETS = [
     {
         "symbol": "XRP",
@@ -28,7 +33,7 @@ ASSETS = [
         "exchange": "binance",
         "pair": "XRP/USDT",
         "risk_grade": "dusuk",
-        "alloc": 0.50,
+        "alloc": 0.55,
         "risk_pct": 0.020,
         "slippage": 0.0005,
     },
@@ -38,7 +43,7 @@ ASSETS = [
         "exchange": "kucoin",
         "pair": "DEBIT/USDT",
         "risk_grade": "orta",
-        "alloc": 0.25,
+        "alloc": 0.27,
         "risk_pct": 0.015,
         "slippage": 0.0020,
     },
@@ -48,19 +53,9 @@ ASSETS = [
         "exchange": "mexc",
         "pair": "ROBIN/USDT",
         "risk_grade": "yuksek",
-        "alloc": 0.15,
+        "alloc": 0.18,
         "risk_pct": 0.010,
-        "slippage": 0.0020,
-    },
-    {
-        "symbol": "TRA",
-        "name": "Trabzonspor Fan Token",
-        "exchange": "okx",
-        "pair": "TRA/USDT",
-        "risk_grade": "cok_yuksek",
-        "alloc": 0.10,
-        "risk_pct": 0.010,
-        "slippage": 0.0020,
+        "slippage": 0.0030,
     },
 ]
 
@@ -70,12 +65,18 @@ ASSET_BY_SYMBOL = {a["symbol"]: a for a in ASSETS}
 FEE_RATE = 0.001            # 0.1% per side
 MIN_TRADE_USD = 5.0
 
-# Spot trading has no leverage, so a position cannot exceed the balance. With a
-# stop under about 1% away, this cap binds before `risk_pct` does and the real
-# risk per trade falls well below it. Effective risk is therefore
-#   min(risk_pct, MAX_POSITION_FRACTION * stop_distance_pct)
-# and the dashboard reports the realised figure per trade.
-MAX_POSITION_FRACTION = 0.5
+# Spot trading has no leverage, so a position can use the balance but not exceed
+# it. The cap is 1.0 rather than 0.5 because halving it made the stated risk
+# unreachable: with a 1% stop the sizing model wanted 200% of the balance, the
+# cap bound first, and realised risk per trade came out near 0.4% instead of the
+# 2% the config claimed. Widening the stop (ATR_SL_MULT, MIN_STOP_PCT) together
+# with this cap lets realised risk approach the target. Every trade records the
+# amount it actually put at risk, and the dashboard shows it.
+MAX_POSITION_FRACTION = 1.0
+
+# A position may not exceed this share of the entry candle's traded volume.
+# Above it the simulated fill stops being believable on a thin book.
+MAX_VOLUME_SHARE = 0.02
 
 # Strategy parameters.
 EMA_FAST, EMA_MID, EMA_SLOW = 9, 21, 50
@@ -84,12 +85,19 @@ RSI_ENTRY_MAX = 45
 MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
 BB_PERIOD, BB_STD = 20, 2.0
 ATR_PERIOD = 14
-ATR_SL_MULT = 1.5
-MIN_STOP_PCT = 0.006   # a stop is never closer than 0.6% to the entry
+ATR_SL_MULT = 2.5
+MIN_STOP_PCT = 0.015   # a stop is never closer than 1.5% to the entry
 RISK_REWARD = 2.0
 VOLUME_MIN_RATIO = 0.5       # candle volume vs. 20-bar average
 MACD_CROSS_LOOKBACK = 3
 TREND_LOOKBACK = 10
+
+# Regime filter. The reference material buys reversal patterns inside a
+# downtrend, which in crypto means catching a falling market. This filter keeps
+# that entry but demands the longer trend still points up, so the pattern is a
+# pullback inside an uptrend rather than a guess at a bottom.
+USE_TREND_FILTER = True
+TREND_EMA = 200
 
 # Discretionary exits, in addition to stop-loss, target and the time limit.
 USE_BEAR_PATTERN_EXIT = True
@@ -98,7 +106,12 @@ USE_MACD_EXIT = False        # closes winners early on 5m/15m crypto
 # Runtime.
 POLL_SECONDS = 15
 BACKFILL_DAYS = 30
-CALC_WINDOW = 300            # candles fed to the indicator pipeline
+CALC_WINDOW = 400            # candles fed to the indicator pipeline
+
+# Long-horizon test window. Thirty days is a single market regime, so the long
+# test covers both directions. Only XRP has this much 5m/15m history; the newer
+# listings contribute whatever their venue holds.
+LONG_TEST_DAYS = 180
 
 # On its very first run the live wallet replays this many days of recent
 # candles, so the dashboard opens with real trades instead of an empty table.

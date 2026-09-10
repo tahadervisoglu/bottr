@@ -64,33 +64,69 @@ stratejileri arasında yarı yarıya paylaştırır.
 
 | Coin | Borsa | Risk | Pay | USD | İşlem başına risk |
 |---|---|---|---|---|---|
-| XRP | Binance | düşük | %50 | 5.000 | %2,0 |
-| DEBIT | KuCoin | orta | %25 | 2.500 | %1,5 |
-| ROBIN | MEXC | yüksek | %15 | 1.500 | %1,0 |
-| TRA | OKX | çok yüksek | %10 | 1.000 | %1,0 |
+| XRP | Binance | düşük | %55 | 5.500 | %2,0 |
+| DEBIT | KuCoin | orta | %27 | 2.700 | %1,5 |
+| ROBIN | MEXC | yüksek | %18 | 1.800 | %1,0 |
 
-Spot işlemde kaldıraç yok, bu yüzden pozisyon bakiyenin %50'sini geçemez. Stop
-mesafesi %1'den darsa bu tavan devreye girer ve işlem başına gerçek risk hedeflenen
-yüzdenin altında kalır. Panel her pozisyonun gerçek risk tutarını gösterir.
+Trabzonspor Fan Token çıkarıldı. İşlem gördüğü borsalarda günlük hacim yaklaşık
+15.000 dolar. 250 dolarlık bir pozisyon bile günlük hacmin yüzde 1,7'si eder ve
+gerçek piyasada fiyatı kendi kendine hareket ettirir. Orada yapılan simülasyon
+gerçek uygulamada anlamını kaybediyordu.
+
+Spot işlemde kaldıraç yok, pozisyon bakiyeyi geçemez. Pozisyon büyüklüğü ayrıca
+giriş mumunun hacminin yüzde 2'siyle sınırlı, çünkü ince bir emir defterinde
+bunun üzerindeki bir dolum inandırıcı değil. Her işlem gerçekte riske attığı
+tutarı kaydeder ve panel bunu gösterir.
 
 ## Strateji
 
-Giriş, kapanmış bir mumda şu üç koşul birden sağlanınca:
+Giriş, kapanmış bir mumda şu dört koşul birden sağlanınca:
 
 1. Dört boğa mum formasyonundan biri: hamile boğa, kros hamile boğa,
-   doji yıldız boğa, çekiç. Hepsi düşüş trendi ön koşulu içerir.
-2. Teyit: RSI 45'in altında veya MACD son 3 mumda sinyal çizgisini yukarı kesti.
-3. Hacim, son 20 mum ortalamasının en az yarısı.
+   doji yıldız boğa, çekiç. Hepsi kısa vadeli düşüş ön koşulu içerir.
+2. Rejim filtresi: fiyat 200 periyotluk EMA'nın üstünde olmalı.
+3. Teyit: RSI 45'in altında veya MACD son 3 mumda sinyal çizgisini yukarı kesti.
+4. Hacim, son 20 mum ortalamasının en az yarısı.
+
+İkinci madde eğitim materyalinden bir sapma. Materyal, düşüş trendinde dönüş
+formasyonu almayı öneriyor. Kriptoda bu, düşen bıçağı yakalamaya çalışmak
+anlamına geliyor. Rejim filtresi girişi koruyor ama uzun vadeli trendin yukarı
+olmasını şart koşuyor, böylece formasyon bir dip tahmini değil yükseliş içindeki
+geri çekilme oluyor. 180 günlük testte bu filtre sonucu yüzde -40,5'ten
+yüzde -17,8'e çıkardı.
 
 Çıkış, hangisi önce gelirse:
 
-- Stop-loss: formasyon dibi ile giriş eksi 1,5 ATR değerlerinden geniş olanı,
-  en az %0,6 mesafede.
+- Stop-loss: formasyon dibi ile giriş eksi 2,5 ATR değerlerinden geniş olanı,
+  en az %1,5 mesafede.
 - Take-profit: risk mesafesinin 2 katı.
 - Ayı formasyonu (hamile ayı, yutan ayı, kara bulut).
 - Süre limiti: 5m'de 48 mum, 15m'de 32 mum.
 
 Sadece long. Short ve kaldıraç yok.
+
+## Test sonuçları
+
+Kısa test tek bir piyasa dönemini ölçer. O dönem yükselişse sonuç yanıltıcı
+çıkar. Uzun test her iki yönü de içerir. İkisi ayrı ayrı saklanır ve panelde
+ayrı sayfalarda görünür.
+
+```
+python backtest.py --days 30     kısa test
+python backtest.py --long        180 günlük test
+```
+
+| Test | Sonuç | Komisyon öncesi brüt | Ödenen komisyon |
+|---|---|---|---|
+| 30 gün | +%0,50 | +270 $ | 220 $ |
+| 180 gün | -%17,80 | -811 $ | 969 $ |
+
+Otuz günlük artı sonuç dönem şansıdır. Yüz seksen günde sinyalin kendisi
+komisyon hesaba katılmadan bile zarardadır. Her iki test de al-tut karşılaştırması
+gösterir: aynı parayı coine yatırıp hiç dokunmamak ne getirirdi.
+
+Sadece XRP'de 180 günlük geçmiş var. DEBIT 15 gün, ROBIN 4 gün önce listelendi,
+onlar kendi yaşları kadar veri katıyor.
 
 ## Dosyalar
 

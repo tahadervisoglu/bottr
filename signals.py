@@ -50,10 +50,16 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["vol_avg"] = df["volume"].rolling(20).mean()
 
-    # Trend context: majority of the last N closes relative to EMA 21.
+    # Short-term context: majority of the last N closes relative to EMA 21.
     above = (close > df["ema_mid"]).rolling(config.TREND_LOOKBACK).mean()
     df["trend_up"] = above >= 0.6
     df["trend_down"] = above <= 0.4
+
+    # Long-term regime. Until the long EMA has enough history it is NaN, and
+    # `regime_up` stays False, so no trade is taken on an unformed trend.
+    df["ema_long"] = close.ewm(span=config.TREND_EMA, adjust=False).mean()
+    enough = df.index >= config.TREND_EMA
+    df["regime_up"] = (close > df["ema_long"]) & enough
     return df
 
 

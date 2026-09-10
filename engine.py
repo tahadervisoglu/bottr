@@ -49,24 +49,28 @@ class Book:
 
     # --- sizing ---
 
-    def size(self, entry, sl):
+    def size(self, entry, sl, candle_volume=None):
+        """Quantity implied by the risk budget, capped by balance and liquidity."""
         risk_per_unit = entry - sl
         if risk_per_unit <= 0:
             return 0.0
         qty = (self.balance * self.risk_pct) / risk_per_unit
-        max_qty = (self.balance * config.MAX_POSITION_FRACTION) / entry
-        return min(qty, max_qty)
+        qty = min(qty, (self.balance * config.MAX_POSITION_FRACTION) / entry)
+        if candle_volume and candle_volume > 0:
+            qty = min(qty, candle_volume * config.MAX_VOLUME_SHARE)
+        return qty
 
     # --- trade lifecycle ---
 
-    def open(self, ts, raw_price, sl, tp, reason):
+    def open(self, ts, raw_price, sl, tp, reason, candle_volume=None):
         entry = raw_price * (1 + self.slippage)
         sl_adj = min(sl, entry * 0.999)
-        qty = self.size(entry, sl_adj)
+        qty = self.size(entry, sl_adj, candle_volume)
         if qty <= 0 or qty * entry < config.MIN_TRADE_USD:
             return None
         fee = qty * entry * config.FEE_RATE
         self.balance -= fee
+        risk_usd = (entry - sl_adj) * qty
         self.position = Position(
             strategy_id=self.strategy_id, symbol=self.symbol,
             timeframe=self.timeframe, mode=self.mode, entry_ts=ts,
@@ -75,6 +79,7 @@ class Book:
             "trades", strategy_id=self.strategy_id, symbol=self.symbol,
             timeframe=self.timeframe, mode=self.mode, entry_ts=ts,
             entry_price=entry, qty=qty, sl=sl_adj, tp=tp, fee=fee,
+            risk_usd=risk_usd, risk_pct_real=risk_usd / self.balance * 100,
             reason_entry=reason, status="open")
         return self.position
 
@@ -109,6 +114,9 @@ def entry_signal(df, i):
         return False, None, None
 
     names = sig.pattern_names(row, "bull")
+
+    if config.USE_TREND_FILTER and not bool(row["regime_up"]):
+        return False, names, f"uzun trend asagi (EMA {config.TREND_EMA} alti)"
 
     vol_avg = row["vol_avg"]
     if vol_avg and vol_avg > 0:
@@ -185,7 +193,7 @@ def step(book, df, i, record_signals=True):
                          acted=int(ok), note=note or "")
         if ok:
             sl, tp = stop_and_target(df, i, close)
-            if book.open(ts, close, sl, tp, reason):
+            if book.open(ts, close, sl, tp, reason, float(row["volume"])):
                 event = f"giris:{reason}"
 
     return event

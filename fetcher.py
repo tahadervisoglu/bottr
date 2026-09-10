@@ -41,6 +41,35 @@ def fetch_latest(exchange_id, pair, timeframe, limit=1000):
     return client(exchange_id).fetch_ohlcv(pair, timeframe=timeframe, limit=limit)
 
 
+def walk_back(exchange_id, symbol, pair, timeframe, earliest, want_since,
+              max_rounds=60):
+    """Page backwards from `earliest` toward `want_since`.
+
+    Some venues refuse a `since` that predates the listing and answer with an
+    empty list, which makes a single forward query look like "no history".
+    Stepping back one page at a time finds the true start instead.
+    """
+    ex = client(exchange_id)
+    step = config.TIMEFRAME_MS[timeframe]
+    stored, cursor = 0, earliest
+
+    for _ in range(max_rounds):
+        if cursor <= want_since:
+            break
+        since = max(want_since, cursor - 1000 * step)
+        batch = ex.fetch_ohlcv(pair, timeframe=timeframe, since=since, limit=1000)
+        batch = [r for r in batch if r[0] < cursor]
+        if not batch:
+            break
+        stored += store.save_candles(exchange_id, symbol, timeframe, batch)
+        new_earliest = min(r[0] for r in batch)
+        if new_earliest >= cursor:
+            break
+        cursor = new_earliest
+
+    return stored
+
+
 def update_asset(asset, timeframe, backfill_days=None):
     """Fetch missing history and any new candles. Returns the number stored."""
     symbol, exchange_id, pair = asset["symbol"], asset["exchange"], asset["pair"]
@@ -51,14 +80,17 @@ def update_asset(asset, timeframe, backfill_days=None):
     first, last = store.candle_bounds(exchange_id, symbol, timeframe)
     stored = 0
 
-    # Backfill older history when the stored series does not reach far enough.
-    if first is None or first > want_since + step:
-        rows = fetch_range(exchange_id, pair, timeframe, want_since,
-                           until_ms=first)
+    if first is None:
+        rows = fetch_range(exchange_id, pair, timeframe, want_since)
         if not rows:
-            # The pair has no data that far back; take whatever the venue has.
+            # The venue will not serve a `since` this old; take its latest page
+            # and let walk_back find how far the history really goes.
             rows = fetch_latest(exchange_id, pair, timeframe)
         stored += store.save_candles(exchange_id, symbol, timeframe, rows)
+        first, last = store.candle_bounds(exchange_id, symbol, timeframe)
+
+    if first is not None and first > want_since + step:
+        stored += walk_back(exchange_id, symbol, pair, timeframe, first, want_since)
 
     # Forward update from the newest stored candle.
     _, last = store.candle_bounds(exchange_id, symbol, timeframe)
