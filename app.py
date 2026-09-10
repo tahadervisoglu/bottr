@@ -180,7 +180,26 @@ with st.sidebar:
             f"{'acik' if config.USE_BEAR_PATTERN_EXIT else 'kapali'}\n"
             f"- MACD cikisinda cikis: "
             f"{'acik' if config.USE_MACD_EXIT else 'kapali'}\n"
+            f"- Duz alim (EMA {config.TREND_EMA} alti): "
+            f"{config.LEVERAGE_PLAIN}x\n"
+            f"- Teyitli alim (EMA {config.TREND_EMA} ustu): "
+            f"{config.LEVERAGE_CONFIRMED}x\n"
             "- Sadece alis yapar, acik satis yoktur")
+        if config.LEVERAGE_CONFIRMED > 1:
+            liq = (1 / config.LEVERAGE_CONFIRMED
+                   - config.MAINTENANCE_MARGIN_RATE) * 100
+            if liq <= config.MIN_STOP_PCT * 100:
+                st.error(
+                    f"{config.LEVERAGE_CONFIRMED}x kaldiracta tasfiye "
+                    f"%{liq:.2f} dususte gelir, stop ise en az "
+                    f"%{config.MIN_STOP_PCT * 100:.1f} uzakta. Stop hic "
+                    "calisamaz, her kaybeden islem teminatin tamamini goturur.")
+            else:
+                st.caption(
+                    f"{config.LEVERAGE_CONFIRMED}x kaldiracta tasfiye yaklasik "
+                    f"%{liq:.1f} dususte gelir. Stop %"
+                    f"{config.MIN_STOP_PCT * 100:.1f} uzakta oldugu icin once "
+                    "stop calisir.")
 
 
 # ------------------------------------------------------------------ body ---
@@ -324,6 +343,12 @@ def body():
                     "Kar/Zarar %": round((px / r["entry_price"] - 1) * 100, 2),
                     "Hedefe kalan %": round(mesafe_tp, 2),
                     "Stopa kalan %": round(mesafe_sl, 2),
+                    "Kaldirac": f"{int(r['leverage'] or 1)}x",
+                    "Tasfiye fiyati": (round(float(r["liq_price"]), 8)
+                                       if pd.notna(r.get("liq_price")) else "-"),
+                    "Tasfiyeye kalan %": (
+                        round((float(r["liq_price"]) / px - 1) * 100, 2)
+                        if pd.notna(r.get("liq_price")) else "-"),
                     "Riske attigi $": round((r["entry_price"] - r["sl"]) * r["qty"], 2),
                     "Risk %": round(r["risk_pct_real"], 2)
                               if pd.notna(r.get("risk_pct_real")) else None,
@@ -333,7 +358,10 @@ def body():
             st.caption(
                 "Hedefe kalan: fiyatin kar al seviyesine ulasmasi icin gereken yuzde. "
                 "Stopa kalan: zarar kes seviyesine dusmesi icin gereken yuzde. "
-                "Riske attigi: stop calisirsa kaybedilecek tutar.")
+                "Riske attigi: stop calisirsa kaybedilecek tutar. Kaldirac 1x "
+                "ise tasfiye yoktur. Kaldiracli pozisyonda fiyat tasfiye "
+                "seviyesine inerse pozisyon zorla kapanir ve teminatin tamami "
+                "gider; stop tasfiyeden uzaktaysa hic calisamaz.")
 
         st.divider()
         st.subheader("Son hareketler")

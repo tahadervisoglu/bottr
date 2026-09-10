@@ -92,12 +92,34 @@ VOLUME_MIN_RATIO = 0.5       # candle volume vs. 20-bar average
 MACD_CROSS_LOOKBACK = 3
 TREND_LOOKBACK = 10
 
-# Regime filter. The reference material buys reversal patterns inside a
-# downtrend, which in crypto means catching a falling market. This filter keeps
-# that entry but demands the longer trend still points up, so the pattern is a
-# pullback inside an uptrend rather than a guess at a bottom.
-USE_TREND_FILTER = True
+# Regime, as a grade rather than a gate.
+#
+# The 200-period EMA used to block every entry beneath it, which cut signals by
+# about 80% and left the terminal silent for hours. It now sorts entries into
+# two tiers instead: a signal under the EMA is taken unleveraged, a signal above
+# it is treated as the higher-confidence case and takes leverage.
+#
+# Set USE_TREND_FILTER back to True to restore the old behaviour, where a signal
+# under the EMA is skipped entirely.
+USE_TREND_FILTER = False
 TREND_EMA = 200
+
+# Leverage per tier. LEVERAGE_CONFIRMED applies when price is above the regime
+# EMA, LEVERAGE_PLAIN otherwise. 1 means spot, no borrowing.
+#
+# Read this before raising LEVERAGE_CONFIRMED to 100. A leveraged position is
+# liquidated once the loss eats the margin, which happens near a 1/leverage
+# adverse move. At 100x that is about 1%, and MIN_STOP_PCT keeps every stop at
+# least 1.5% away, so the stop can never fire first: every losing trade becomes
+# a total loss of its margin instead of the intended risk_pct. At 10x the
+# liquidation sits near 10% and the stop fires long before it. The simulation
+# models liquidation honestly, so setting 100 here shows what it really costs.
+LEVERAGE_PLAIN = 1
+LEVERAGE_CONFIRMED = 10
+
+# Fraction of the position's value the venue keeps as maintenance margin.
+# Liquidation triggers when equity in the position falls to this level.
+MAINTENANCE_MARGIN_RATE = 0.005
 
 # Discretionary exits, in addition to stop-loss, target and the time limit.
 USE_BEAR_PATTERN_EXIT = True

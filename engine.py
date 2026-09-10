@@ -25,6 +25,9 @@ class Position:
     reason_entry: str
     bars_held: int = 0
     trade_id: int = None
+    leverage: int = 1
+    margin: float = 0.0
+    liq: float = None
 
     def value(self, price):
         return self.qty * price
@@ -49,13 +52,19 @@ class Book:
 
     # --- sizing ---
 
-    def size(self, entry, sl, candle_volume=None):
-        """Quantity implied by the risk budget, capped by balance and liquidity."""
+    def size(self, entry, sl, candle_volume=None, leverage=1):
+        """Quantity implied by the risk budget, capped by margin and liquidity.
+
+        Leverage does not change the intended dollar risk: the stop still sits
+        `risk_per_unit` away. What it changes is how much of the balance the
+        position ties up, so a stop too close to fund at 1x becomes fundable.
+        """
         risk_per_unit = entry - sl
         if risk_per_unit <= 0:
             return 0.0
         qty = (self.balance * self.risk_pct) / risk_per_unit
-        qty = min(qty, (self.balance * config.MAX_POSITION_FRACTION) / entry)
+        max_notional = self.balance * config.MAX_POSITION_FRACTION * leverage
+        qty = min(qty, max_notional / entry)
         if candle_volume and candle_volume > 0:
             qty = min(qty, candle_volume * config.MAX_VOLUME_SHARE)
         return qty
@@ -65,21 +74,32 @@ class Book:
     def open(self, ts, raw_price, sl, tp, reason, candle_volume=None):
         entry = raw_price * (1 + self.slippage)
         sl_adj = min(sl, entry * 0.999)
-        qty = self.size(entry, sl_adj, candle_volume)
+        lev = leverage_for(reason)
+        qty = self.size(entry, sl_adj, candle_volume, lev)
         if qty <= 0 or qty * entry < config.MIN_TRADE_USD:
             return None
+
         fee = qty * entry * config.FEE_RATE
         self.balance -= fee
+        margin = qty * entry / lev
+        liq = liquidation_price(entry, lev)
         risk_usd = (entry - sl_adj) * qty
+        # Liquidation caps the loss at the margin posted, so the real exposure
+        # is whichever comes first.
+        if liq is not None and liq > sl_adj:
+            risk_usd = min(risk_usd, margin)
+
         self.position = Position(
             strategy_id=self.strategy_id, symbol=self.symbol,
             timeframe=self.timeframe, mode=self.mode, entry_ts=ts,
-            entry_price=entry, qty=qty, sl=sl_adj, tp=tp, reason_entry=reason)
+            entry_price=entry, qty=qty, sl=sl_adj, tp=tp, reason_entry=reason,
+            leverage=lev, margin=margin, liq=liq)
         self.position.trade_id = store.insert(
             "trades", strategy_id=self.strategy_id, symbol=self.symbol,
             timeframe=self.timeframe, mode=self.mode, entry_ts=ts,
             entry_price=entry, qty=qty, sl=sl_adj, tp=tp, fee=fee,
             risk_usd=risk_usd, risk_pct_real=risk_usd / self.balance * 100,
+            leverage=lev, margin=margin, liq_price=liq,
             reason_entry=reason, status="open")
         return self.position
 
@@ -91,6 +111,9 @@ class Book:
         gross = (exit_price - pos.entry_price) * pos.qty
         fee = pos.qty * exit_price * config.FEE_RATE
         pnl = gross - fee
+        # A liquidation cannot cost more than the margin that was posted.
+        if reason.startswith("TASFIYE"):
+            pnl = max(pnl, -pos.margin)
         self.balance += pnl
         pnl_pct = (exit_price / pos.entry_price - 1) * 100
         store.update("trades", pos.trade_id, exit_ts=ts, exit_price=exit_price,
@@ -115,7 +138,8 @@ def entry_signal(df, i):
 
     names = sig.pattern_names(row, "bull")
 
-    if config.USE_TREND_FILTER and not bool(row["regime_up"]):
+    confirmed = bool(row["regime_up"])
+    if config.USE_TREND_FILTER and not confirmed:
         return False, names, f"uzun trend asagi (EMA {config.TREND_EMA} alti)"
 
     vol_avg = row["vol_avg"]
@@ -131,7 +155,22 @@ def entry_signal(df, i):
         return False, names, "teyit yok (RSI/MACD)"
 
     confirm = "RSI" if rsi_ok else "MACD"
-    return True, f"{names}|{confirm}", None
+    tier = "TEYITLI" if confirmed else "duz"
+    return True, f"{names}|{confirm}|{tier}", None
+
+
+def leverage_for(reason):
+    """Leverage implied by the tier recorded in the entry reason."""
+    if reason and reason.endswith("|TEYITLI"):
+        return max(1, int(config.LEVERAGE_CONFIRMED))
+    return max(1, int(config.LEVERAGE_PLAIN))
+
+
+def liquidation_price(entry, leverage):
+    """Price at which the margin is exhausted. None when unleveraged."""
+    if leverage <= 1:
+        return None
+    return entry * (1 - 1 / leverage + config.MAINTENANCE_MARGIN_RATE)
 
 
 def stop_and_target(df, i, entry):
@@ -158,6 +197,10 @@ def stop_and_target(df, i, entry):
 def exit_signal(df, i, pos, max_bars):
     """Check exits against one candle. Stop wins ties with the target."""
     row = df.iloc[i]
+    # Liquidation is checked first: the venue closes the position before any
+    # stop of ours can fire when it sits nearer the entry.
+    if pos.liq is not None and row["low"] <= pos.liq:
+        return pos.liq, f"TASFIYE ({pos.leverage}x)"
     if row["low"] <= pos.sl:
         return pos.sl, "stop-loss"
     if row["high"] >= pos.tp:

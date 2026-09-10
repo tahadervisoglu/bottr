@@ -12,7 +12,7 @@ headless = true
 enableCORS = true
 enableXsrfProtection = true
 enableStaticServing = false
-fileWatcherType = "none"
+fileWatcherType = "auto"
 maxUploadSize = 1
 
 [browser]

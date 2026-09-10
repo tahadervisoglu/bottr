@@ -5,6 +5,8 @@ State lives in SQLite, so the loop resumes cleanly after a restart.
 """
 
 import json
+
+import pandas as pd
 import time
 import traceback
 
@@ -38,7 +40,10 @@ def restore_book(asset, timeframe, sid):
             strategy_id=sid, symbol=asset["symbol"], timeframe=timeframe,
             mode=MODE, entry_ts=int(r["entry_ts"]), entry_price=float(r["entry_price"]),
             qty=float(r["qty"]), sl=float(r["sl"]), tp=float(r["tp"]),
-            reason_entry=r["reason_entry"], trade_id=int(r["id"]))
+            reason_entry=r["reason_entry"], trade_id=int(r["id"]),
+            leverage=int(r["leverage"] or 1),
+            margin=float(r["margin"] or 0.0),
+            liq=float(r["liq_price"]) if pd.notna(r["liq_price"]) else None)
     return book
 
 

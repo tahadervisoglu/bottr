@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS trades (
     qty REAL, sl REAL, tp REAL,
     pnl REAL, pnl_pct REAL, fee REAL,
     risk_usd REAL, risk_pct_real REAL,
+    leverage INTEGER, margin REAL, liq_price REAL,
     reason_entry TEXT, reason_exit TEXT,
     status TEXT
 );
@@ -77,9 +78,11 @@ def init_db():
         conn.executescript(SCHEMA)
         # Add columns introduced after a database was first created.
         have = {r["name"] for r in conn.execute("PRAGMA table_info(trades)")}
-        for col in ("risk_usd", "risk_pct_real"):
+        for col, typ in (("risk_usd", "REAL"), ("risk_pct_real", "REAL"),
+                         ("leverage", "INTEGER"), ("margin", "REAL"),
+                         ("liq_price", "REAL")):
             if col not in have:
-                conn.execute(f"ALTER TABLE trades ADD COLUMN {col} REAL")
+                conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
 
 
 def now_ms() -> int:
