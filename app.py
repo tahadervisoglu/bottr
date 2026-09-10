@@ -172,6 +172,13 @@ with st.sidebar:
                    "ve 15 dakikalik strateji arasinda ikiye boler.")
 
     with st.expander("Kurallar"):
+        # Streamlit reloads app.py on edit but keeps imported modules cached, so
+        # a page can briefly run new code against an older config. getattr with a
+        # default keeps that from taking the whole page down.
+        lev_plain = getattr(config, "LEVERAGE_PLAIN", 1)
+        lev_conf = getattr(config, "LEVERAGE_CONFIRMED", 1)
+        maint = getattr(config, "MAINTENANCE_MARGIN_RATE", 0.005)
+
         st.write(
             f"- Komisyon her yonde %{config.FEE_RATE * 100:.2f}\n"
             f"- Hedef, riskin {config.RISK_REWARD:.0f} kati\n"
@@ -180,26 +187,22 @@ with st.sidebar:
             f"{'acik' if config.USE_BEAR_PATTERN_EXIT else 'kapali'}\n"
             f"- MACD cikisinda cikis: "
             f"{'acik' if config.USE_MACD_EXIT else 'kapali'}\n"
-            f"- Duz alim (EMA {config.TREND_EMA} alti): "
-            f"{config.LEVERAGE_PLAIN}x\n"
-            f"- Teyitli alim (EMA {config.TREND_EMA} ustu): "
-            f"{config.LEVERAGE_CONFIRMED}x\n"
+            f"- Duz alim (EMA {config.TREND_EMA} alti): {lev_plain}x\n"
+            f"- Teyitli alim (EMA {config.TREND_EMA} ustu): {lev_conf}x\n"
             "- Sadece alis yapar, acik satis yoktur")
-        if config.LEVERAGE_CONFIRMED > 1:
-            liq = (1 / config.LEVERAGE_CONFIRMED
-                   - config.MAINTENANCE_MARGIN_RATE) * 100
+        if lev_conf > 1:
+            liq = (1 / lev_conf - maint) * 100
             if liq <= config.MIN_STOP_PCT * 100:
                 st.error(
-                    f"{config.LEVERAGE_CONFIRMED}x kaldiracta tasfiye "
-                    f"%{liq:.2f} dususte gelir, stop ise en az "
-                    f"%{config.MIN_STOP_PCT * 100:.1f} uzakta. Stop hic "
-                    "calisamaz, her kaybeden islem teminatin tamamini goturur.")
+                    f"{lev_conf}x kaldiracta tasfiye %{liq:.2f} dususte gelir, "
+                    f"stop ise en az %{config.MIN_STOP_PCT * 100:.1f} uzakta. "
+                    "Stop hic calisamaz, her kaybeden islem teminatin tamamini "
+                    "goturur.")
             else:
                 st.caption(
-                    f"{config.LEVERAGE_CONFIRMED}x kaldiracta tasfiye yaklasik "
-                    f"%{liq:.1f} dususte gelir. Stop %"
-                    f"{config.MIN_STOP_PCT * 100:.1f} uzakta oldugu icin once "
-                    "stop calisir.")
+                    f"{lev_conf}x kaldiracta tasfiye yaklasik %{liq:.1f} "
+                    f"dususte gelir. Stop %{config.MIN_STOP_PCT * 100:.1f} "
+                    "uzakta oldugu icin once stop calisir.")
 
 
 # ------------------------------------------------------------------ body ---
@@ -242,13 +245,25 @@ def body():
     # ------------------------------------------------------- page: live status ---
 
     if page == "Su an ne oluyor":
+        lev_plain = getattr(config, "LEVERAGE_PLAIN", 1)
+        lev_conf = getattr(config, "LEVERAGE_CONFIRMED", 1)
+        gating = config.USE_TREND_FILTER
+
         st.subheader("Her strateji su an ne yapiyor?")
-        st.write(
-            "Bot almak icin dort sart arar. Fiyat 200 mumluk ortalamanin ustunde "
-            "olmali (rejim), kisa vadede bir boga mum formasyonu cikmali, RSI 45 "
-            "altinda olmali ya da MACD yukari kesmeli, ve hacim yeterli olmali. "
-            "Dordu birden tutmadan almaz. Asagidaki son sutun, o anda hangisinin "
-            "tutmadigini soyler.")
+        if gating:
+            st.write(
+                "Bot almak icin dort sart arar. Fiyat 200 mumluk ortalamanin "
+                "ustunde olmali (rejim), kisa vadede bir boga mum formasyonu "
+                "cikmali, RSI 45 altinda olmali ya da MACD yukari kesmeli, ve "
+                "hacim yeterli olmali. Dordu birden tutmadan almaz.")
+        else:
+            st.write(
+                "Bot almak icin uc sart arar: boga mum formasyonu, RSI 45 "
+                "altinda olmasi ya da MACD yukari kesmesi, ve yeterli hacim. "
+                f"Rejim bunlari engellemez, sadece kaldiraci belirler. Fiyat "
+                f"200 mumluk ortalamanin altindaysa duz alim ({lev_plain}x), "
+                f"ustundeyse teyitli alim ({lev_conf}x). Asagidaki son sutun, "
+                "o anda hangi sartin tutmadigini soyler.")
 
         last_trade = store.query(
             "SELECT strategy_id, MAX(entry_ts) e FROM trades WHERE mode='live' "
@@ -279,14 +294,17 @@ def body():
                 what = (f"POZISYONDA. {float(r['entry_price']):.6g} alindi, "
                         f"hedef {float(r['tp']):.6g}, stop {float(r['sl']):.6g}. "
                         f"Su an {w['unrealized']:+.2f} $")
-            elif not regime_ok:
+            elif not regime_ok and gating:
                 what = (f"REJIM KAPALI. Fiyat 200 mumluk ortalamanin "
                         f"({ema_long:.6g}) altinda. Bu seride hic islem "
                         "acilmaz, formasyon ciksa bile.")
             elif s["boga_formasyon"]:
                 what = f"formasyon var ({s['boga_formasyon']}) ama teyit/hacim tutmadi"
-            else:
+            elif gating:
                 what = "rejim uygun, boga formasyonu bekliyor"
+            else:
+                katman = f"teyitli ({lev_conf}x)" if regime_ok else f"duz ({lev_plain}x)"
+                what = f"boga formasyonu bekliyor. Simdi acsa {katman} olurdu"
 
             lt = last_trade.get(sid)
             rows.append({
@@ -308,17 +326,23 @@ def body():
         if kapali:
             pay = sum(a["alloc"] for a in config.ASSETS
                       if any(s.startswith(a["symbol"] + " ") for s in kapali)) * 100
-            st.warning(
-                f"Su an {len(kapali)} stratejide rejim kapali: {', '.join(kapali)}. "
-                f"Bu coinlerin fiyati 200 mumluk ortalamanin altinda, yani uzun "
-                f"vadeli trend asagi. Trend filtresi bu durumda hic islem acmaz. "
-                f"Portfoyun yaklasik %{pay:.0f}'i bekleme modunda. "
-                "Bu bir ariza degil, kuralin calismasi. Fiyat ortalamanin ustune "
-                "cikinca kendiliginden islem acmaya baslar.")
+            if gating:
+                st.warning(
+                    f"Su an {len(kapali)} stratejide rejim kapali: "
+                    f"{', '.join(kapali)}. Bu coinlerin fiyati 200 mumluk "
+                    "ortalamanin altinda. Trend filtresi acik oldugu icin bu "
+                    f"seride hic islem acilmaz. Portfoyun yaklasik %{pay:.0f}'i "
+                    "bekleme modunda. Bu bir ariza degil, kuralin calismasi.")
+            else:
+                st.info(
+                    f"Su an {len(kapali)} stratejide rejim kapali: "
+                    f"{', '.join(kapali)}. Islem acilmasini engellemez. Bu "
+                    f"seriler islem acarsa duz alim olur, {lev_plain}x kaldirac. "
+                    f"Rejimi acik olanlar teyitli sayilir ve {lev_conf}x kullanir.")
 
         st.caption(
-            "Rejim: fiyat 200 mumluk ortalamanin ustunde mi. Kapaliysa o seride "
-            "hicbir sart islem actiramaz. Trend: fiyatin 21 mumluk ortalamaya gore "
+            "Rejim: fiyat 200 mumluk ortalamanin ustunde mi. Kaldiraci belirler, "
+            "islemi engellemez. Trend: fiyatin 21 mumluk ortalamaya gore "
             "kisa vadeli yonu. RSI 30 altinda asiri satim, 70 ustunde asiri alim. "
             "Hacim, son 20 mumun ortalamasina gore oran; 0.5x altinda bot islem "
             "acmaz. Son islem: bu strateji en son ne zaman alim yapti.")
@@ -343,7 +367,7 @@ def body():
                     "Kar/Zarar %": round((px / r["entry_price"] - 1) * 100, 2),
                     "Hedefe kalan %": round(mesafe_tp, 2),
                     "Stopa kalan %": round(mesafe_sl, 2),
-                    "Kaldirac": f"{int(r['leverage'] or 1)}x",
+                    "Kaldirac": f"{int(r.get('leverage') or 1)}x",
                     "Tasfiye fiyati": (round(float(r["liq_price"]), 8)
                                        if pd.notna(r.get("liq_price")) else "-"),
                     "Tasfiyeye kalan %": (
