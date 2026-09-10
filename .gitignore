@@ -1,0 +1,28 @@
+# Simulated trade database, rebuilt on first run
+data.db
+data.db-wal
+data.db-shm
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Secrets (this project needs none, but never commit them)
+.env
+.env.*
+*.key
+*.pem
+.streamlit/secrets.toml
+
+# Editor and OS
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
