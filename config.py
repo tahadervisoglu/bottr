@@ -105,6 +105,10 @@ USE_MACD_EXIT = False        # closes winners early on 5m/15m crypto
 
 # Runtime.
 POLL_SECONDS = 15
+
+# How often the runner prints a "still alive" line. Trades are rare, so without
+# this the terminal is blank for hours and a working loop looks like a crash.
+STATUS_LINE_SECONDS = 120
 BACKFILL_DAYS = 30
 CALC_WINDOW = 400            # candles fed to the indicator pipeline
 

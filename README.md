@@ -143,6 +143,20 @@ yüzde -17,8'e çıkardı.
 
 Sadece long. Short ve kaldıraç yok.
 
+## Ne sıklıkta işlem açar
+
+Altı strateji toplamda saatte yaklaşık 0,6 işlem açar, yani ortalama iki saatte
+bir. İşlemler arası en uzun gözlenen boşluk 9,5 saat. Bir saat boyunca hiçbir
+şey olmaması normaldir, arıza değildir.
+
+Adayların çoğu teyit kuralında elenir. Formasyon çıkar ama RSI 45'in altında
+değildir ve MACD de kesmemiştir. Gözlenen redlerin yaklaşık dörtte üçü bu
+sebepten, kalanı hacim filtresinden.
+
+Runner her başlatıldığında son `LIVE_WARMUP_DAYS` günü baştan işler. Bu işlemler
+geçmişe ait zaman damgalarıyla saniyeler içinde ekrana dökülür. Panel boş
+açılmasın diye böyle yapıldı, ama gerçek zamanlı bir işlem seli sanılmamalı.
+
 ## Test sonuçları
 
 Kısa test tek bir piyasa dönemini ölçer. O dönem yükselişse sonuç yanıltıcı

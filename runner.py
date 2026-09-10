@@ -114,6 +114,37 @@ def bootstrap():
     return books
 
 
+def heartbeat_line(books):
+    """One line saying the loop is alive and why nothing is happening.
+
+    Without it the terminal shows nothing between trades, and a quiet hour
+    looks identical to a crashed process.
+    """
+    total = start = 0.0
+    open_count = 0
+    blocked = []
+    for asset, tf, sid in config.all_strategies():
+        book = books[sid]
+        start += config.starting_balance(asset["symbol"])
+        total += book.balance
+
+        raw = store.get_state(f"status:{sid}")
+        price = json.loads(raw)["fiyat"] if raw else None
+        if raw and not json.loads(raw).get("rejim_yukari", True):
+            blocked.append(sid)
+
+        if book.position is not None:
+            open_count += 1
+            if price:
+                total += book.position.unrealized(price)
+
+    pct = (total / start - 1) * 100 if start else 0.0
+    note = (f"rejim kapali: {', '.join(blocked)}" if blocked
+            else "tum rejimler acik, formasyon bekleniyor")
+    print(f"[{time.strftime('%H:%M:%S')}] izliyor | deger {total:.2f} "
+          f"({pct:+.2f}%) | acik pozisyon {open_count} | {note}", flush=True)
+
+
 def loop(books=None):
     """Poll forever. Safe to call after bootstrap()."""
     if books is None:
@@ -122,6 +153,7 @@ def loop(books=None):
         books = {sid: restore_book(a, tf, sid)
                  for a, tf, sid in config.all_strategies()}
 
+    last_beat = 0.0
     while True:
         cycle_start = time.time()
         try:
@@ -138,6 +170,11 @@ def loop(books=None):
 
         store.set_state("heartbeat", store.now_ms())
         lock.refresh()
+
+        if time.time() - last_beat >= config.STATUS_LINE_SECONDS:
+            heartbeat_line(books)
+            last_beat = time.time()
+
         elapsed = time.time() - cycle_start
         time.sleep(max(5, config.POLL_SECONDS - elapsed))
 
