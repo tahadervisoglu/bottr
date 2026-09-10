@@ -11,6 +11,7 @@ import traceback
 import config
 import engine
 import fetcher
+import lock
 import signals as sig
 import store
 
@@ -76,6 +77,9 @@ def process(book, asset, timeframe, sid):
         "rsi": round(float(last["rsi"]), 1),
         "trend": ("yukselis" if bool(last["trend_up"])
                   else "dusus" if bool(last["trend_down"]) else "yatay"),
+        "rejim_yukari": bool(last["regime_up"]),
+        "ema_long": float(last["ema_long"]),
+        "islenen_mum_ts": int(last["ts"]),
         "macd_uzeri": bool(last["macd"] > last["macd_signal"]),
         "hacim_orani": round(float(last["volume"] / last["vol_avg"]), 2)
                        if last["vol_avg"] and last["vol_avg"] > 0 else 0.0,
@@ -89,6 +93,8 @@ def process(book, asset, timeframe, sid):
 def bootstrap():
     """Fetch history and replay the warm-up window. Returns the wallets."""
     store.init_db()
+    if not lock.acquire():
+        raise SystemExit(lock.wait_message())
     store.log("INFO", "runner basliyor, gecmis veri cekiliyor")
 
     total, errors = fetcher.update_all()
@@ -111,6 +117,8 @@ def bootstrap():
 def loop(books=None):
     """Poll forever. Safe to call after bootstrap()."""
     if books is None:
+        if not lock.acquire():
+            raise SystemExit(lock.wait_message())
         books = {sid: restore_book(a, tf, sid)
                  for a, tf, sid in config.all_strategies()}
 
@@ -129,6 +137,7 @@ def loop(books=None):
             store.log("ERROR", f"dongu: {exc}")
 
         store.set_state("heartbeat", store.now_ms())
+        lock.refresh()
         elapsed = time.time() - cycle_start
         time.sleep(max(5, config.POLL_SECONDS - elapsed))
 
@@ -142,3 +151,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         store.log("INFO", "runner durduruldu")
+    finally:
+        lock.release()

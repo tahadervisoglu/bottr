@@ -65,6 +65,16 @@ def status_of(sid):
     return json.loads(raw) if raw else None
 
 
+@st.cache_data(ttl=30)
+def regime_now(symbol, timeframe):
+    """Regime state straight from the candles, for runners predating it."""
+    df = store.load_candles(symbol, timeframe, limit=config.CALC_WINDOW)
+    if len(df) < config.TREND_EMA:
+        return True, 0.0
+    ema = df["close"].ewm(span=config.TREND_EMA, adjust=False).mean().iloc[-1]
+    return bool(df["close"].iloc[-1] > ema), float(ema)
+
+
 def wallet(sid, symbol, timeframe, mode):
     """Balance, open P&L and trade stats rebuilt from the trade log."""
     start = config.starting_balance(symbol)
@@ -215,10 +225,17 @@ def body():
     if page == "Su an ne oluyor":
         st.subheader("Her strateji su an ne yapiyor?")
         st.write(
-            "Bot bir coin almak icin ayni anda uc sey arar: dususte bir boga mum "
-            "formasyonu, RSI'nin 45 altinda olmasi ya da MACD'nin yukari kesmesi, "
-            "ve yeterli hacim. Ucu birden olmadan almaz. Asagida her strateji icin "
-            "o anda hangisinin tuttugunu goruyorsun.")
+            "Bot almak icin dort sart arar. Fiyat 200 mumluk ortalamanin ustunde "
+            "olmali (rejim), kisa vadede bir boga mum formasyonu cikmali, RSI 45 "
+            "altinda olmali ya da MACD yukari kesmeli, ve hacim yeterli olmali. "
+            "Dordu birden tutmadan almaz. Asagidaki son sutun, o anda hangisinin "
+            "tutmadigini soyler.")
+
+        last_trade = store.query(
+            "SELECT strategy_id, MAX(entry_ts) e FROM trades WHERE mode='live' "
+            "GROUP BY strategy_id")
+        last_trade = dict(zip(last_trade["strategy_id"], last_trade["e"])) \
+            if not last_trade.empty else {}
 
         rows = []
         for asset, tf, sid in config.all_strategies():
@@ -226,38 +243,66 @@ def body():
             w = wallet(sid, asset["symbol"], tf, "live")
             if s is None:
                 rows.append({"Strateji": f"{asset['symbol']} {tf}",
-                             "Durum": "veri bekleniyor", "Fiyat": "-", "Trend": "-",
-                             "RSI": "-", "Hacim": "-", "Formasyon": "-",
-                             "Bot ne yapiyor": "bot henuz bu seriyi islemedi"})
+                             "Durum": "veri bekleniyor", "Fiyat": "-",
+                             "Rejim": "-", "Trend": "-", "RSI": "-", "Hacim": "-",
+                             "Formasyon": "-", "Son islem": "-",
+                             "Neden almiyor": "bot henuz bu seriyi islemedi"})
                 continue
 
+            if "rejim_yukari" in s:
+                regime_ok, ema_long = s["rejim_yukari"], s.get("ema_long", 0.0)
+            else:
+                # An older runner is still writing status rows without the
+                # regime fields; derive them here so the page stays accurate.
+                regime_ok, ema_long = regime_now(asset["symbol"], tf)
             if w["open_row"] is not None:
                 r = w["open_row"]
-                what = (f"POZISYONDA. {money(float(r['entry_price']))} alindi, "
-                        f"hedef {money(float(r['tp']))}, stop {money(float(r['sl']))}. "
+                what = (f"POZISYONDA. {float(r['entry_price']):.6g} alindi, "
+                        f"hedef {float(r['tp']):.6g}, stop {float(r['sl']):.6g}. "
                         f"Su an {w['unrealized']:+.2f} $")
+            elif not regime_ok:
+                what = (f"REJIM KAPALI. Fiyat 200 mumluk ortalamanin "
+                        f"({ema_long:.6g}) altinda. Bu seride hic islem "
+                        "acilmaz, formasyon ciksa bile.")
             elif s["boga_formasyon"]:
                 what = f"formasyon var ({s['boga_formasyon']}) ama teyit/hacim tutmadi"
-            elif s["trend"] == "dusus":
-                what = "dususte, boga formasyonu bekliyor"
             else:
-                what = "trend uygun degil, bekliyor"
+                what = "rejim uygun, boga formasyonu bekliyor"
 
+            lt = last_trade.get(sid)
             rows.append({
                 "Strateji": f"{asset['symbol']} {tf}",
                 "Durum": "pozisyonda" if w["open_row"] is not None else "bekliyor",
                 "Fiyat": f"{s['fiyat']:.6f}".rstrip("0").rstrip("."),
+                "Rejim": "acik" if regime_ok else "KAPALI",
+                "Son islem": ago(lt) if lt else "hic",
                 "Trend": s["trend"],
                 "RSI": s["rsi"],
                 "Hacim": f"{s['hacim_orani']}x",
                 "Formasyon": s["boga_formasyon"] or s["ayi_formasyon"] or "-",
-                "Bot ne yapiyor": what,
+                "Neden almiyor": what,
             })
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        frame = pd.DataFrame(rows)
+        st.dataframe(frame, hide_index=True, use_container_width=True)
+
+        kapali = frame[frame["Rejim"] == "KAPALI"]["Strateji"].tolist()
+        if kapali:
+            pay = sum(a["alloc"] for a in config.ASSETS
+                      if any(s.startswith(a["symbol"] + " ") for s in kapali)) * 100
+            st.warning(
+                f"Su an {len(kapali)} stratejide rejim kapali: {', '.join(kapali)}. "
+                f"Bu coinlerin fiyati 200 mumluk ortalamanin altinda, yani uzun "
+                f"vadeli trend asagi. Trend filtresi bu durumda hic islem acmaz. "
+                f"Portfoyun yaklasik %{pay:.0f}'i bekleme modunda. "
+                "Bu bir ariza degil, kuralin calismasi. Fiyat ortalamanin ustune "
+                "cikinca kendiliginden islem acmaya baslar.")
+
         st.caption(
-            "Trend: fiyatin 21 mumluk ortalamaya gore yonu. RSI 30 altinda asiri "
-            "satim, 70 ustunde asiri alim demek. Hacim, son 20 mumun ortalamasina "
-            "gore oran; 0.5x altinda bot islem acmaz.")
+            "Rejim: fiyat 200 mumluk ortalamanin ustunde mi. Kapaliysa o seride "
+            "hicbir sart islem actiramaz. Trend: fiyatin 21 mumluk ortalamaya gore "
+            "kisa vadeli yonu. RSI 30 altinda asiri satim, 70 ustunde asiri alim. "
+            "Hacim, son 20 mumun ortalamasina gore oran; 0.5x altinda bot islem "
+            "acmaz. Son islem: bu strateji en son ne zaman alim yapti.")
 
         st.divider()
         st.subheader("Acik pozisyonlar")
