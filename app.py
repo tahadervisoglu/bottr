@@ -10,12 +10,19 @@ from plotly.subplots import make_subplots
 
 import bot_thread
 import config
+import fetcher
+import gate
 import signals as sig
 import store
 
 st.set_page_config(page_title="Paper Trade Bot", layout="wide",
                    initial_sidebar_state="expanded")
 store.init_db()
+
+if not gate.check():
+    st.stop()
+
+READ_ONLY = gate.read_only()
 
 
 @st.cache_resource
@@ -601,9 +608,33 @@ def body():
         if ran:
             st.caption(f"Son calistirma: {ago(ran)}")
 
+        window = config.LONG_TEST_DAYS if mode == "backtest_long" else 30
+        if READ_ONLY:
+            st.caption("Bu panel salt okunur yayinlaniyor. Testi panelin sahibi "
+                       "terminalden calistirir.")
+        elif st.button(f"Testi simdi calistir ({window} gun)", key=f"run_{mode}",
+                       type="primary"):
+            import backtest
+            with st.status(f"{window} gunluk test calisiyor", expanded=True) as s:
+                st.write("Veri cekiliyor...")
+                fetcher.update_all(backfill_days=window)
+                st.write("Kurallar gecmis uzerinde calistiriliyor...")
+                store.clear_mode(mode)
+                store.set_state(f"{mode}:days", window)
+                store.set_state(f"{mode}:ran_at", store.now_ms())
+                for asset, tf, sid in config.all_strategies():
+                    st.write(f"  {sid}")
+                    backtest.run_one(asset, tf, sid, window, mode)
+                s.update(label="Test bitti", state="complete", expanded=False)
+            st.rerun()
+
         bt = summary_frame(mode)
         if bt["Islem"].sum() == 0:
-            st.info(f"Sonuc yok. Terminalde calistir:  {cmd}")
+            st.info(
+                "Sonuc yok. Yukaridaki dugmeye bas, ya da terminalden calistir:  "
+                f"`{cmd}`\n\nBulutta acilan sayfa kendi veritabanini sifirdan "
+                "kurar. Senin bilgisayarindaki sonuclar buraya gelmez, cunku "
+                "veritabani dosyasi depoya dahil degildir.")
         else:
             bh = {}
             for asset, tf, sid in config.all_strategies():

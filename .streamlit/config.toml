@@ -1,0 +1,23 @@
+# Security posture for serving this dashboard through a tunnel.
+#
+# `address` binds the server to the loopback interface only. Nothing on the
+# local network can reach it; the only route in is the tunnel process, which
+# proxies this one port and gives no access to the filesystem or a shell.
+# Streamlit Community Cloud ignores this file's server section.
+
+[server]
+address = "127.0.0.1"
+port = 8511
+headless = true
+enableCORS = true
+enableXsrfProtection = true
+enableStaticServing = false
+fileWatcherType = "none"
+maxUploadSize = 1
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false

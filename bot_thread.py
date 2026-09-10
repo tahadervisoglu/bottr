@@ -28,13 +28,42 @@ def should_run() -> bool:
     return _looks_like_cloud()
 
 
+def _seed_backtest():
+    """Produce a short backtest once, so a fresh deployment is not empty.
+
+    Only app.py runs on a hosted deployment, so `python backtest.py` never
+    executes there and the backtest pages would stay blank forever.
+    """
+    import backtest
+    import config
+    import store
+
+    if store.get_state("backtest:ran_at"):
+        return
+    try:
+        store.clear_mode("backtest")
+        store.set_state("backtest:days", 30)
+        for asset, tf, sid in config.all_strategies():
+            backtest.run_one(asset, tf, sid, 30, "backtest")
+        store.set_state("backtest:ran_at", store.now_ms())
+        store.log("INFO", "ilk backtest hazir")
+    except Exception as exc:  # noqa: BLE001 - a failed seed must not stop the bot
+        store.log("ERROR", f"backtest seed: {exc}")
+
+
+def _boot():
+    import runner
+
+    runner.bootstrap()      # fetch history, replay the warm-up window
+    _seed_backtest()        # then fill the backtest page from the same data
+    runner.loop()
+
+
 def start():
     """Start the loop once. Returns a label describing what happened."""
     if not should_run():
         return "kapali"
 
-    import runner  # imported lazily so local dashboards stay light
-
-    thread = threading.Thread(target=runner.main, name="bot-loop", daemon=True)
+    thread = threading.Thread(target=_boot, name="bot-loop", daemon=True)
     thread.start()
     return "calisiyor"

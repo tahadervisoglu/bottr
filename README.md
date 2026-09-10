@@ -34,6 +34,44 @@ Geçmiş veri üzerinde test:
 python backtest.py --days 30
 ```
 
+## Kendi bilgisayarındaki botu linkten yayınlama
+
+Streamlit Cloud'a deploy edilen kopya kendi veritabanını sıfırdan kurar ve kendi
+botunu çalıştırır. Senin bilgisayarındaki sonuçlar oraya gitmez, çünkü `data.db`
+depoya dahil değildir. Kendi çalışan botunu bir linkten göstermek istiyorsan
+tünel kullan.
+
+```powershell
+.\yayinla.ps1
+```
+
+Botu, paneli ve tüneli birlikte başlatır ve `trycloudflare.com` ile biten bir
+link verir. Ctrl+C ile üçü de kapanır, link anında ölür.
+
+Parola istersen:
+
+```powershell
+.\yayinla.ps1 -Parola secdiginSifre
+```
+
+### Güvenlik
+
+Tünel makineye erişim vermez. Yalnızca 8511 portunu dışarı proxyler.
+
+- Streamlit `127.0.0.1` adresine bağlanır. Yerel ağdaki hiçbir cihaz doğrudan
+  erişemez, tek yol tünel sürecidir. `.streamlit/config.toml` bunu zorunlu kılar.
+- Dosya sistemi açık değil. `/config.py`, `/data.db` ve dizin gezme denemeleri
+  dosya içeriği değil uygulamanın HTML kabuğunu döndürür. `enableStaticServing`
+  kapalı.
+- Ziyaretçi sunucuda iş başlatamaz. `PUBLIC_TUNNEL=1` iken backtest çalıştırma
+  düğmesi gizlenir, böylece linki bilen biri işlemciyi meşgul edemez.
+- Dosya yükleme yok, kabuk erişimi yok, veritabanına yazma yolu yok. Panel
+  yalnızca okur.
+- Link rastgele üretilir ama parolasız haliyle linki bilen herkes görebilir.
+  Gizli tutmak istiyorsan `-Parola` ver.
+- Paylaşılan veri yalnızca simülasyon sonuçlarıdır. Borsa anahtarı, kişisel veri
+  ya da gerçek hesap bilgisi projede hiç yok.
+
 ## İnternete açma (Streamlit Community Cloud)
 
 1. [share.streamlit.io](https://share.streamlit.io) adresine GitHub hesabınla gir.

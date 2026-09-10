@@ -86,7 +86,8 @@ def process(book, asset, timeframe, sid):
     return processed
 
 
-def main():
+def bootstrap():
+    """Fetch history and replay the warm-up window. Returns the wallets."""
     store.init_db()
     store.log("INFO", "runner basliyor, gecmis veri cekiliyor")
 
@@ -94,8 +95,24 @@ def main():
     store.log("INFO", f"ilk yukleme: {total} mum, hatali: {errors or 'yok'}")
 
     books = {sid: restore_book(a, tf, sid) for a, tf, sid in config.all_strategies()}
-    for sid, b in books.items():
-        store.log("INFO", f"{sid} bakiye={b.balance:.2f} pozisyon={'var' if b.position else 'yok'}")
+    for asset, tf, sid in config.all_strategies():
+        try:
+            process(books[sid], asset, tf, sid)
+        except Exception as exc:  # noqa: BLE001
+            store.log("ERROR", f"warmup {sid}: {exc}")
+        b = books[sid]
+        store.log("INFO",
+                  f"{sid} bakiye={b.balance:.2f} "
+                  f"pozisyon={'var' if b.position else 'yok'}")
+    store.set_state("heartbeat", store.now_ms())
+    return books
+
+
+def loop(books=None):
+    """Poll forever. Safe to call after bootstrap()."""
+    if books is None:
+        books = {sid: restore_book(a, tf, sid)
+                 for a, tf, sid in config.all_strategies()}
 
     while True:
         cycle_start = time.time()
@@ -114,6 +131,10 @@ def main():
         store.set_state("heartbeat", store.now_ms())
         elapsed = time.time() - cycle_start
         time.sleep(max(5, config.POLL_SECONDS - elapsed))
+
+
+def main():
+    loop(bootstrap())
 
 
 if __name__ == "__main__":
